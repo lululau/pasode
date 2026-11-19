@@ -1,6 +1,7 @@
 import { afterEach, expect, spyOn, test } from "bun:test"
 import { createRoot, createEffect, createMemo } from "solid-js"
-import { agents, api, daemon, loadOlder, openSubagentTimeline, openTimeline, sessionTitle, setAgents, setWorkspaceTitles, timeline, waiting, type Mark, type PaseoAgent } from "./paseo"
+import { reconcile } from "solid-js/store"
+import { agents, api, availableProviders, catalog, daemon, fetchAllProviderModels, findModel, loadOlder, openSubagentTimeline, openTimeline, providerName, providersLoaded, sessionTitle, setAgents, setAvailableProviders, setCatalog, setProviderLabels, setWorkspaceTitles, timeline, waiting, type Mark, type PaseoAgent } from "./paseo"
 import { turnFooters } from "./render/turns"
 import { computeMetrics } from "./sidebar/metrics/metrics"
 
@@ -340,5 +341,119 @@ test("opening a subagent drops an in-flight older page", async () => {
   } finally {
     await openTimeline(undefined)
     fetch.mockRestore()
+  }
+})
+
+function resetProviders() {
+  setAvailableProviders(undefined)
+  setProviderLabels(reconcile({}))
+  setCatalog(reconcile({}))
+}
+
+test("fetchAllProviderModels discovers enabled providers from snapshot, preserves Claude Code label, and fills missing model lists", async () => {
+  const snapshot = spyOn(api.providers, "snapshot").mockResolvedValue({
+    generatedAt: "2026-11-19T00:00:00Z",
+    requestId: "r1",
+    entries: [
+      { provider: "claude", enabled: false, status: "unavailable", label: "Claude" },
+      { provider: "codex", enabled: false, status: "unavailable", label: "Codex" },
+      {
+        provider: "zcode",
+        enabled: true,
+        status: "ready",
+        label: "ZCode",
+        models: [{ provider: "zcode", id: "deepseek-flash", label: "DeepSeek Flash" }],
+      },
+      { provider: "magpie", enabled: true, status: "ready", label: "Magpie" },
+    ],
+  } as never)
+  const listModels = spyOn(api.providers, "listModels").mockResolvedValue({
+    provider: "magpie",
+    models: [{ provider: "magpie", id: "opus-5-5", label: "Claude · Opus 5.5", isDefault: true }],
+    error: null,
+    fetchedAt: "2026-11-19T00:00:00Z",
+    requestId: "r2",
+  } as never)
+  try {
+    expect(providersLoaded()).toBe(false)
+    const groups = await fetchAllProviderModels()
+    expect(providersLoaded()).toBe(true)
+    expect(availableProviders()).toEqual(["zcode", "magpie"])
+    expect(groups).toEqual([
+      { provider: "zcode", models: [{ provider: "zcode", id: "deepseek-flash", label: "DeepSeek Flash" }] },
+      { provider: "magpie", models: [{ provider: "magpie", id: "opus-5-5", label: "Claude · Opus 5.5", isDefault: true }] },
+    ])
+    expect(listModels).toHaveBeenCalledTimes(1)
+    expect(listModels).toHaveBeenCalledWith("magpie")
+    expect(providerName("claude")).toBe("Claude Code")
+    expect(providerName("zcode")).toBe("ZCode")
+    expect(providerName("magpie")).toBe("Magpie")
+    expect(catalog.zcode).toHaveLength(1)
+    expect(catalog.magpie).toHaveLength(1)
+    expect(findModel("magpie")?.id).toBe("opus-5-5")
+    expect(findModel("zcode")).toBeUndefined()
+    expect(findModel("zcode", "deepseek-flash")?.label).toBe("DeepSeek Flash")
+    expect(findModel("zcode", "missing")).toBeUndefined()
+  } finally {
+    snapshot.mockRestore()
+    listModels.mockRestore()
+    resetProviders()
+  }
+})
+
+test("fetchAllProviderModels falls back to listAvailable + listModels when snapshot fails, tolerating single-provider failures", async () => {
+  const snapshot = spyOn(api.providers, "snapshot").mockRejectedValue(new Error("unsupported"))
+  const listAvailable = spyOn(api.providers, "listAvailable").mockResolvedValue({
+    providers: [
+      { provider: "zcode", available: true, error: null },
+      { provider: "broken", available: true, error: null },
+      { provider: "disabled", available: false, error: "off" },
+    ],
+    error: null,
+    fetchedAt: "2026-11-19T00:00:00Z",
+    requestId: "r1",
+  } as never)
+  const listModels = spyOn(api.providers, "listModels").mockImplementation(async (provider) => {
+    if (provider === "broken") throw new Error("timeout")
+    return {
+      provider,
+      models: [{ provider, id: "m1", label: "Model 1" }],
+      error: null,
+      fetchedAt: "2026-11-19T00:00:00Z",
+      requestId: "r2",
+    } as never
+  })
+  try {
+    const groups = await fetchAllProviderModels()
+    expect(availableProviders()).toEqual(["zcode", "broken"])
+    expect(groups).toEqual([{ provider: "zcode", models: [{ provider: "zcode", id: "m1", label: "Model 1" }] }])
+    expect(catalog.zcode?.[0]?.id).toBe("m1")
+  } finally {
+    snapshot.mockRestore()
+    listAvailable.mockRestore()
+    listModels.mockRestore()
+    resetProviders()
+  }
+})
+
+test("fetchAllProviderModels with a single provider only queries that provider", async () => {
+  const snapshot = spyOn(api.providers, "snapshot")
+  const listModels = spyOn(api.providers, "listModels").mockResolvedValue({
+    provider: "zcode",
+    models: [{ provider: "zcode", id: "m1", label: "Model 1" }],
+    error: null,
+    fetchedAt: "2026-11-19T00:00:00Z",
+    requestId: "r1",
+  } as never)
+  try {
+    const groups = await fetchAllProviderModels("zcode")
+    expect(snapshot).not.toHaveBeenCalled()
+    expect(listModels).toHaveBeenCalledWith("zcode")
+    expect(groups).toEqual([{ provider: "zcode", models: [{ provider: "zcode", id: "m1", label: "Model 1" }] }])
+    expect(catalog.zcode?.[0]?.id).toBe("m1")
+  } finally {
+    snapshot.mockRestore()
+    listModels.mockRestore()
+    resetProviders()
   }
 })

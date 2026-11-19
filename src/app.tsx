@@ -16,7 +16,7 @@ import { createKeymap } from "./keys"
 import { Logo } from "./logo"
 import { configSummary, registerManageCommands, statusDialog } from "./manage"
 import { claudeConfigFile, codexConfigFile, listMcpServers, mcpCounts, mcpHealth, setMcpEnabled, type McpHealth } from "./mcp"
-import { agents, api, daemon, findModel, loadOlder, mcpRevision, modelLabel, PROVIDERS, providerName, sessionTitle, setMcpRevision, timeline } from "./paseo"
+import { agents, api, availableProviders, catalog, daemon, fetchAllProviderModels, findModel, loadOlder, mcpRevision, modelLabel, providerName, providersLoaded, sessionTitle, setMcpRevision, timeline } from "./paseo"
 import { favoriteModels, modelSections, recentModels, rememberModel, selectModel, toggleFavorite } from "./models"
 import { TimelineDialog } from "./timeline-dialog"
 import { loadedPlugins, loadPlugins, Slot } from "./plugin"
@@ -56,6 +56,15 @@ export function App(props: { initialAgentId?: string }) {
 
   void loadPlugins(renderer, sidebarFeatures)
   createEffect(() => (renderer.useMouse = prefs.mouse))
+
+  // If the default or saved draft provider is disabled on this daemon, fall back in-memory to an enabled one.
+  createEffect(() => {
+    if (!providersLoaded()) return
+    const enabled = availableProviders()
+    if (!enabled.length || enabled.includes(draft().provider)) return
+    const next = enabled.find((id) => catalog[id]?.some((model) => model.isDefault)) ?? enabled.find((id) => (catalog[id]?.length ?? 0) > 0) ?? enabled[0]!
+    setDraft((prev) => (enabled.includes(prev.provider) ? prev : { ...prev, provider: next, model: undefined, label: undefined, thinking: undefined, profile: undefined }))
+  })
 
   // Accept the short ID prefixes `paseo ls` prints.
   const initial = props.initialAgentId
@@ -192,8 +201,9 @@ export function App(props: { initialAgentId?: string }) {
       daemon.getDaemonStatus().catch(() => undefined),
       api.config.get().then((result) => result.config, () => undefined),
     ])
-    const providers = (snapshot?.entries ?? [])
-      .filter((entry) => PROVIDERS.includes(entry.provider as (typeof PROVIDERS)[number]))
+    const entries = snapshot?.entries ?? []
+    const activeProviders = entries.filter((entry) => entry.enabled !== false)
+    const providers = (activeProviders.length ? activeProviders : entries)
       .map((entry) => `  ${entry.provider}: ${entry.status}${entry.error ? ` (${entry.error})` : ""}`)
     const plugins = loadedPlugins.map((plugin) => `  ${plugin.id}${plugin.error ? ` ✕ ${plugin.error}` : ""}`)
     const rtt = daemon.getLastLivenessRttMs()
@@ -300,20 +310,22 @@ export function App(props: { initialAgentId?: string }) {
 
   async function openModels() {
     const agent = current()
-    const providers = agent ? [agent.provider] : [...PROVIDERS]
-    const results = await Promise.all(providers.map((provider) => api.providers.listModels(provider))).catch(showError)
-    if (!results) return
-    const all = results.flatMap((result) =>
-      (result.models ?? []).map((model) => ({
-        title: model.label,
-        value: `${result.provider}/${model.id}`,
-        category: result.provider,
-        description: model.isDefault ? "default" : undefined,
-      })),
+    const groups = await fetchAllProviderModels(agent?.provider).catch(showError)
+    if (!groups) return
+    const all = groups.flatMap(({ provider, models }) =>
+      models
+        .filter((model) => model.isSelectable !== false)
+        .map((model) => ({
+          title: model.label,
+          value: `${provider}/${model.id}`,
+          category: provider,
+          description: model.isDefault ? "default" : undefined,
+        })),
     )
     // Sections are fixed at open, so favoriting marks a row (★) without moving the cursor onto another model.
     const options = modelSections(all, favoriteModels(), recentModels())
-    const selected = agent ? `${agent.provider}/${agent.model ?? agent.runtimeInfo?.model}` : `${draft().provider}/${draft().model}`
+    const draftModel = draft().model ?? findModel(draft().provider)?.id ?? catalog[draft().provider]?.[0]?.id
+    const selected = agent ? `${agent.provider}/${agent.model ?? agent.runtimeInfo?.model}` : `${draft().provider}/${draftModel}`
     dialog.replace(() => (
       <DialogSelect
         title="Select model"
@@ -335,7 +347,7 @@ export function App(props: { initialAgentId?: string }) {
     const provider = agent?.provider ?? draft().provider
     const modelId = agent ? (agent.model ?? agent.runtimeInfo?.model) : draft().model
     const result = await api.providers.listModels(provider).catch(showError)
-    const model = result && ((result.models ?? []).find((item) => item.id === modelId) ?? (result.models ?? []).find((item) => item.isDefault))
+    const model = result && ((result.models ?? []).find((item) => item.id === modelId) ?? (result.models ?? []).find((item) => item.isDefault) ?? (result.models ?? [])[0])
     const options = model?.thinkingOptions ?? []
     if (!options.length) return notify(`${model?.label ?? provider} has no thinking options`, "warning")
     const selected = agent ? (agent.thinkingOptionId ?? agent.effectiveThinkingOptionId ?? undefined) : (draft().thinking ?? model?.defaultThinkingOptionId ?? undefined)

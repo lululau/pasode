@@ -4,7 +4,7 @@ import path from "node:path"
 import { createMemo, createSignal, onCleanup, Show } from "solid-js"
 import * as actions from "./actions"
 import { dialog, DialogSelect, type SelectOption } from "./dialog"
-import { active, agents, api, daemon, ownWorkspace, PROVIDERS, sessionTitle, setAgents, waiting, workspacePins, type PaseoAgent } from "./paseo"
+import { active, agents, api, availableProviders, daemon, ownWorkspace, sessionTitle, setAgents, waiting, workspacePins, type PaseoAgent } from "./paseo"
 import { Spinner } from "./session"
 import { agentId, navigate, notify, showError } from "./state"
 import { theme } from "./theme"
@@ -163,7 +163,7 @@ function HistorySessions(props: { onBack: () => void }) {
 export function ImportList() {
   const [entries, setEntries] = createSignal<Awaited<ReturnType<typeof daemon.fetchRecentProviderSessions>>>()
   const filter = searched(
-    (query) => daemon.fetchRecentProviderSessions({ providers: [...PROVIDERS], limit: 50, ...(query ? { query } : {}) }),
+    (query) => daemon.fetchRecentProviderSessions({ providers: [...availableProviders()], limit: 50, ...(query ? { query } : {}) }),
     (result) => {
       setEntries(result)
       if (result.providerErrors?.length) notify(result.providerErrors.map((error) => `${error.provider}: ${error.message}`).join("\n"), "warning")
@@ -183,7 +183,7 @@ export function ImportList() {
   return (
     <DialogSelect
       title="Import a session"
-      placeholder="Search Claude and Codex sessions"
+      placeholder="Search provider sessions"
       emptyText={
         entries()
           ? `No sessions started outside Paseo${entries()!.filteredAlreadyImportedCount ? ` (${entries()!.filteredAlreadyImportedCount} already imported)` : ""}`

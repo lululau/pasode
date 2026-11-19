@@ -1,4 +1,4 @@
-import { createPaseoApi, type PaseoAgent, type PaseoAgentStream, type PaseoProviderUsageResult, type PaseoWorkspace } from "@getpaseo/client"
+import { createPaseoApi, type PaseoAgent, type PaseoAgentStream, type PaseoProviderSnapshotResult, type PaseoProviderUsageResult, type PaseoWorkspace } from "@getpaseo/client"
 import { DaemonClient, supportsUsageReports } from "@getpaseo/client/internal/daemon-client"
 import type { UsageReportEntry } from "@getpaseo/protocol/messages"
 import { readFileSync } from "node:fs"
@@ -34,6 +34,7 @@ export const api = createPaseoApi(daemon)
 
 export async function connect() {
   await daemon.connect()
+  api.providers.subscribe((update) => applyProviderSnapshot(update.entries))
   void loadCatalog()
   void watchWorkspaces().catch(() => {})
   const list = await api.agents.list({ filter: { includeArchived: false, includeBackground: true }, page: { limit: 200 }, subscribe: {} })
@@ -236,12 +237,76 @@ function itemMark(item: AgentTimelineItem, at: number): Mark {
 export const [mcpRevision, setMcpRevision] = createSignal(0)
 
 type CatalogModel = NonNullable<Awaited<ReturnType<typeof api.providers.listModels>>["models"]>[number]
+type ProviderSnapshotEntry = PaseoProviderSnapshotResult["entries"][number]
 /** Each provider's models (display names like "Opus 5.5", thinking options), fetched on connect. */
 export const [catalog, setCatalog] = createStore<Record<string, CatalogModel[]>>({})
+const [daemonProviders, setDaemonProviders] = createSignal<string[]>()
+/** Enabled providers reported by the connected daemon, or the built-in defaults before a snapshot arrives. */
+export const availableProviders = () => daemonProviders() ?? [...PROVIDERS]
+/** Whether the connected daemon has reported its provider list yet. */
+export const providersLoaded = () => daemonProviders() !== undefined
+/** Override/reset the daemon provider list (primarily for tests). */
+export const setAvailableProviders = setDaemonProviders
+/** Provider id → display label reported by the daemon. */
+export const [providerLabels, setProviderLabels] = createStore<Record<string, string>>({})
+
+/** Applies a daemon provider snapshot into reactive provider, label, and model stores. */
+export function applyProviderSnapshot(entries: readonly ProviderSnapshotEntry[]) {
+  batch(() => {
+    const labels: Record<string, string> = {}
+    const enabled: string[] = []
+    for (const entry of entries) {
+      if (entry.label) labels[entry.provider] = entry.label
+      if (entry.enabled !== false) enabled.push(entry.provider)
+      if (entry.models) setCatalog(entry.provider, reconcile(entry.models))
+    }
+    setProviderLabels(reconcile(labels))
+    setDaemonProviders(enabled)
+  })
+}
+
+/** Fetches models for one provider (in a live session) or all enabled providers reported by the daemon. */
+export async function fetchAllProviderModels(onlyProvider?: string): Promise<{ provider: string; models: CatalogModel[] }[]> {
+  if (onlyProvider) {
+    const result = await api.providers.listModels(onlyProvider)
+    if (result.models) setCatalog(onlyProvider, reconcile(result.models))
+    return [{ provider: onlyProvider, models: result.models ?? [] }]
+  }
+  const snapshot = await api.providers.snapshot().catch(() => undefined)
+  if (snapshot) {
+    applyProviderSnapshot(snapshot.entries)
+    const enabled = snapshot.entries.filter((entry) => entry.enabled !== false)
+    return Promise.all(
+      enabled.map(async (entry) => {
+        if (entry.models) return { provider: entry.provider, models: entry.models }
+        const result = await api.providers.listModels(entry.provider).catch(() => undefined)
+        if (result?.models) setCatalog(entry.provider, reconcile(result.models))
+        return { provider: entry.provider, models: result?.models ?? [] }
+      }),
+    )
+  }
+  const available = await api.providers.listAvailable().catch(() => undefined)
+  const discovered = available?.providers?.filter((entry) => entry.available).map((entry) => entry.provider)
+  if (discovered) setDaemonProviders(discovered)
+  const target = discovered ?? availableProviders()
+  const settled = await Promise.allSettled(target.map((provider) => api.providers.listModels(provider)))
+  const fulfilled: { provider: string; models: CatalogModel[] }[] = []
+  let firstError: unknown
+  for (const [index, outcome] of settled.entries()) {
+    const provider = target[index]!
+    if (outcome.status === "fulfilled") {
+      if (outcome.value.models) setCatalog(provider, reconcile(outcome.value.models))
+      fulfilled.push({ provider, models: outcome.value.models ?? [] })
+    } else if (firstError === undefined) {
+      firstError = outcome.reason
+    }
+  }
+  if (!fulfilled.length && firstError !== undefined) throw firstError
+  return fulfilled
+}
 
 export async function loadCatalog() {
-  const results = await Promise.all(PROVIDERS.map((provider) => api.providers.listModels(provider).catch(() => undefined)))
-  for (const [index, result] of results.entries()) if (result?.models) setCatalog(PROVIDERS[index]!, reconcile(result.models))
+  await fetchAllProviderModels().catch(() => undefined)
 }
 
 export const findModel = (provider: string, id?: string | null) => {
@@ -249,8 +314,9 @@ export const findModel = (provider: string, id?: string | null) => {
   return models.find((model) => model.id === id) ?? (id ? undefined : models.find((model) => model.isDefault))
 }
 export const modelLabel = (provider: string, id?: string | null) => findModel(provider, id)?.label ?? id ?? "default model"
+const BUILTIN_PROVIDER_NAMES: Record<string, string> = { claude: "Claude Code", codex: "Codex" }
 /** OpenCode shows the provider's product name; Paseo's Claude provider is Claude Code. */
-export const providerName = (provider: string) => ({ claude: "Claude Code", codex: "Codex" })[provider] ?? provider
+export const providerName = (provider: string) => BUILTIN_PROVIDER_NAMES[provider] ?? providerLabels[provider] ?? provider
 
 /** One entry per provider account, as the daemon reports them (same data as the Paseo app); a failed poll keeps `lastSuccessful`. */
 export const [usage, setUsage] = createSignal<UsageReportEntry[]>()

@@ -4,7 +4,7 @@ import { TextAttributes } from "@opentui/core"
 import { useKeyboard } from "@opentui/solid"
 import { createResource, Show } from "solid-js"
 import { dialog, DialogAlert, dialogs } from "../dialog"
-import { api, daemon, PROVIDERS, providerName } from "../paseo"
+import { api, availableProviders, daemon, providerName } from "../paseo"
 import { Spinner } from "../session"
 import { notify, showError } from "../state"
 import { theme } from "../theme"
@@ -51,7 +51,14 @@ function DialogStatus(props: { message: string; onDone: () => void }) {
 }
 
 async function diagnostics() {
-  const provider = await dialogs.select({ title: "Provider diagnostics", options: PROVIDERS.map((id) => ({ title: providerName(id), value: id })) })
+  const provider = await dialogs.select({
+    title: "Provider diagnostics",
+    options: availableProviders().map((id) => ({
+      title: providerName(id),
+      value: id,
+      description: providerName(id) !== id ? id : undefined,
+    })),
+  })
   if (provider) dialog.replace(() => <Diagnostic provider={provider} />, "large")
 }
 

@@ -2,7 +2,7 @@
 // here; the logic follows the Paseo app's profile picker (materialize-profile, profile-summary).
 import type { AgentProfile } from "@getpaseo/protocol/agent-profile"
 import { dialog, DialogSelect } from "../dialog"
-import { api, daemon, findModel, modelLabel, PROVIDERS, providerName, type PaseoAgent } from "../paseo"
+import { api, availableProviders, daemon, findModel, modelLabel, providerName, type PaseoAgent } from "../paseo"
 import { current, draft, notify, rememberDraft, showError, type Draft } from "../state"
 
 const trim = (value?: string) => value?.trim() || undefined
@@ -60,14 +60,15 @@ export async function openProfiles() {
   const result = await api.config.get().catch(showError)
   if (!result) return
   const agent = current()
-  // A running session can't change provider, and pasode only drives Claude and Codex.
-  const providers: readonly string[] = agent ? [agent.provider] : PROVIDERS
+  // A running session can't change provider.
+  const providers: readonly string[] = agent ? [agent.provider] : availableProviders()
   const profiles = (result.config.agentProfiles ?? []).filter((profile) => providers.includes(profile.provider))
+  const providerSummary = providers.length <= 2 ? providers.map(providerName).join(" or ") : "enabled providers"
   dialog.replace(
     () => (
       <DialogSelect
         title={agent ? `Apply profile to this session · ${providerName(agent.provider)}` : "Agent profiles"}
-        emptyText={`No agent profiles for ${providers.map(providerName).join(" or ")} on this daemon`}
+        emptyText={`No agent profiles for ${providerSummary} on this daemon`}
         options={profiles.map((profile) => ({ title: profile.name, value: profile.id, description: profileSummary(profile) }))}
         onSelect={(option) => {
           dialog.clear()

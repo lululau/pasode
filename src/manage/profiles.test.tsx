@@ -1,9 +1,10 @@
 import type { TestRendererSetup } from "@opentui/core/testing"
 import { testRender } from "@opentui/solid"
 import { afterEach, expect, spyOn, test } from "bun:test"
+import { reconcile } from "solid-js/store"
 import { createSession } from "../actions"
 import { dialog, DialogHost } from "../dialog"
-import { api, daemon, setAgents, setCatalog, type PaseoAgent } from "../paseo"
+import { api, daemon, setAgents, setAvailableProviders, setCatalog, setProviderLabels, type PaseoAgent } from "../paseo"
 import { draft, setAgentId, setDraft, setToast, toast } from "../state"
 import { applyConfig, materialize, openProfiles, profileDraft, profileSummary } from "./profiles"
 
@@ -15,6 +16,8 @@ afterEach(() => {
   screen = undefined
   while (mocks.length) mocks.pop()!.mockRestore()
   setAgentId(undefined)
+  setAvailableProviders(undefined)
+  setProviderLabels(reconcile({}))
   setCatalog("claude", [])
   setDraft({ provider: "claude" })
   setToast(undefined)
@@ -107,4 +110,27 @@ test("a daemon without agent profiles says so", async () => {
   mocks.push(spyOn(daemon, "getLastServerInfoMessage").mockReturnValue({ features: {} } as never))
   await openProfiles()
   expect(toast()).toMatchObject({ variant: "warning", message: expect.stringContaining("doesn't support agent profiles") })
+})
+
+test("/profiles displays profiles for dynamically discovered providers and filters disabled ones", async () => {
+  setAvailableProviders(["zcode"])
+  setProviderLabels(reconcile({ zcode: "ZCode" }))
+  mocks.push(
+    spyOn(daemon, "getLastServerInfoMessage").mockReturnValue({ features: { agentProfiles: true, agentConfigApply: true } } as never),
+    spyOn(api.config, "get").mockResolvedValue({
+      requestId: "r",
+      config: {
+        agentProfiles: [
+          profile({ id: "pz", name: "GLM-5.3", provider: "zcode", model: "glm-5.3", modeId: "yolo", thinkingOptionId: undefined }),
+          profile({ id: "pc", name: "Hidden Claude", provider: "claude" }),
+        ],
+      },
+    } as never),
+  )
+  screen = await testRender(() => <DialogHost />, { width: 110, height: 30 })
+  await openProfiles()
+  await screen.renderOnce()
+  const frame = screen.captureCharFrame()
+  expect(frame).toMatch(/GLM-5\.3\s+ZCode/)
+  expect(frame).not.toContain("Hidden Claude")
 })

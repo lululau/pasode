@@ -3,15 +3,15 @@ import { RGBA } from "@opentui/core"
 import { mkdtemp, mkdir, readdir, rm } from "node:fs/promises"
 import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
-import { ristretto } from "../theme"
+import { ristretto, tokyonight } from "../theme"
 import { listThemes, loadTheme, resolveThemeJson } from "./index"
 
 const keys = Object.keys(ristretto) as (keyof typeof ristretto)[]
-const assets = (await readdir(join(import.meta.dir, "assets"), { recursive: true })).filter((name) => name.endsWith(".json"))
+const assets = (await readdir(join(import.meta.dir, "assets"), { recursive: true })).filter((name) => name.endsWith(".json")).sort()
 
 describe("built-in themes", () => {
-  test("ships only OpenCode's default theme; the rest come from ~/.config/{opencode,pasode}/themes", () => {
-    expect(assets).toEqual(["v2/opencode.json"])
+  test("ships OpenCode's default, tokyonight, and catppuccin-macchiato themes; the rest come from ~/.config/{opencode,pasode}/themes", () => {
+    expect(assets).toEqual(["v2/catppuccin-macchiato.json", "v2/opencode.json", "v2/tokyonight.json"])
   })
   for (const filename of assets) {
     for (const mode of ["dark", "light"] as const) {
@@ -41,6 +41,22 @@ test.skipIf(!(await userTheme.exists()))("user's V2 ristretto colors", async () 
 test("ristretto fixture matches every fallback token, including action/paste/shadow colors", async () => {
   const colors = resolveThemeJson(await Bun.file(join(import.meta.dir, "fixtures/monokai-pro-ristretto.json")).json(), "dark")
   for (const key of keys) expect(colors[key].toInts()).toEqual(ristretto[key].toInts())
+})
+
+test("built-in tokyonight matches fallback palette and resolves light mode; catppuccin-macchiato resolves expected colors", async () => {
+  const tokyoDark = await loadTheme("tokyonight", "dark")
+  for (const key of keys) expect(tokyoDark[key].toInts()).toEqual(tokyonight[key].toInts())
+  const tokyoLight = await loadTheme("tokyonight", "light")
+  expect(tokyoLight.background.toInts()).toEqual(RGBA.fromHex("#e1e2e7").toInts())
+  expect(tokyoLight.primary.toInts()).toEqual(RGBA.fromHex("#2e7de9").toInts())
+
+  for (const mode of ["dark", "light"] as const) {
+    const macchiato = await loadTheme("catppuccin-macchiato", mode)
+    expect(macchiato.background.toInts()).toEqual(RGBA.fromHex("#24273a").toInts())
+    expect(macchiato.backgroundPanel.toInts()).toEqual(RGBA.fromHex("#1e2030").toInts())
+    expect(macchiato.primary.toInts()).toEqual(RGBA.fromHex("#8aadf4").toInts())
+    expect(macchiato.text.toInts()).toEqual(RGBA.fromHex("#cad3f5").toInts())
+  }
 })
 
 test("2.0.26 categorical agent rule: mode-specific hue order", async () => {
@@ -162,7 +178,7 @@ test("discovery applies builtin < opencode < pasode precedence, then loads by fi
     expect(error).toBe("")
     expect(exit).toBe(0)
     const result = JSON.parse(output)
-    expect(result.themes).toHaveLength(2) // the default plus the temp "custom" theme
+    expect(result.themes).toHaveLength(4) // 3 built-ins plus the temp "custom" theme
     expect(result.themes.find((theme: { name: string }) => theme.name === "opencode").source).toBe("pasode")
     expect(result.themes.find((theme: { name: string }) => theme.name === "custom").source).toBe("opencode")
     expect(result.primary).toEqual([18, 52, 86, 255])

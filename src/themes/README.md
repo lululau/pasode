@@ -1,7 +1,6 @@
 # OpenCode themes
 
-Only `v2/opencode.json` from OpenCode v2.0.26 (`packages/tui/src/theme/assets`) ships built in; other
-themes load from `~/.config/{opencode,pasode}/themes`.
+`v2/opencode.json` from OpenCode v2.0.26 (`packages/tui/src/theme/assets`) along with `v2/tokyonight.json` and `v2/catppuccin-macchiato.json` (migrated from OpenCode's `packages/tui/src/theme/assets` via `packages/theme/src/tui/v1-migrate.ts`) ship built in; other themes load from `~/.config/{opencode,pasode}/themes`.
 
 Legacy hue migration and OKLCH helpers are ported from `packages/theme/src/tui`.
 Resolution follows its mode selection, state expansion, dialog contextualization,

@@ -149,8 +149,80 @@ export const ristretto: ThemeColors = {
   syntaxPunctuation: hex("#c2b5b7"),
 }
 
+/** Built-in fallback: OpenCode's Tokyo Night theme (dark). */
+export const tokyonight: ThemeColors = {
+  primary: hex("#82aaff"),
+  secondary: hex("#c099ff"),
+  accent: hex("#ff966c"),
+  agent: hex("#c099ff"),
+  error: hex("#ff757f"),
+  warning: hex("#ff966c"),
+  success: hex("#c3e88d"),
+  info: hex("#82aaff"),
+  text: hex("#c8d3f5"),
+  textMuted: hex("#828bb8"),
+  selectedListItemText: hex("#1a1b26"),
+  actionText: hex("#c8d3f5"),
+  actionTextSelected: hex("#82aaff"),
+  promptPasteText: hex("#1a1b26"),
+  promptPasteBackground: hex("#ff966c"),
+  logoShadow: hex("#46495a"),
+  logoShadowMuted: hex("#34374a"),
+  background: hex("#1a1b26"),
+  backgroundHover: hex("#1e2030"),
+  backgroundPanel: hex("#1e2030"),
+  backgroundPanelHover: hex("#222436"),
+  backgroundElement: hex("#222436"),
+  backgroundMenu: hex("#1e2030"),
+  backgroundAction: hex("#00000000"),
+  backgroundActionHovered: hex("#1e2030"),
+  backgroundActionFocused: hex("#82aaff"),
+  backgroundActionSelected: hex("#00000000"),
+  backgroundMenuActionHovered: hex("#222436"),
+  backgroundMenuActionFocused: hex("#82aaff"),
+  backgroundMenuActionSelected: hex("#00000000"),
+  border: hex("#737aa2"),
+  borderActive: hex("#9099b2"),
+  borderSubtle: hex("#1e2030"),
+  diffAdded: hex("#4fd6be"),
+  diffRemoved: hex("#c53b53"),
+  diffContext: hex("#828bb8"),
+  diffHunkHeader: hex("#828bb8"),
+  diffHighlightAdded: hex("#b8db87"),
+  diffHighlightRemoved: hex("#e26a75"),
+  diffAddedBg: hex("#20303b"),
+  diffRemovedBg: hex("#37222c"),
+  diffContextBg: hex("#1e2030"),
+  diffLineNumber: hex("#8f909a"),
+  diffAddedLineNumberBg: hex("#1b2b34"),
+  diffRemovedLineNumberBg: hex("#2d1f26"),
+  markdownText: hex("#c8d3f5"),
+  markdownHeading: hex("#c099ff"),
+  markdownLink: hex("#82aaff"),
+  markdownLinkText: hex("#86e1fc"),
+  markdownCode: hex("#c3e88d"),
+  markdownBlockQuote: hex("#ffc777"),
+  markdownEmph: hex("#ffc777"),
+  markdownStrong: hex("#ff966c"),
+  markdownHorizontalRule: hex("#828bb8"),
+  markdownListItem: hex("#82aaff"),
+  markdownListEnumeration: hex("#86e1fc"),
+  markdownImage: hex("#82aaff"),
+  markdownImageText: hex("#86e1fc"),
+  markdownCodeBlock: hex("#c8d3f5"),
+  syntaxComment: hex("#828bb8"),
+  syntaxKeyword: hex("#c099ff"),
+  syntaxFunction: hex("#82aaff"),
+  syntaxVariable: hex("#ff757f"),
+  syntaxString: hex("#c3e88d"),
+  syntaxNumber: hex("#ff966c"),
+  syntaxType: hex("#ffc777"),
+  syntaxOperator: hex("#86e1fc"),
+  syntaxPunctuation: hex("#c8d3f5"),
+}
+
 /** Reactive: read `theme.x` inside JSX/effects and it follows `applyTheme`. */
-export const [theme, setThemeStore] = createStore<ThemeColors>({ ...ristretto })
+export const [theme, setThemeStore] = createStore<ThemeColors>({ ...tokyonight })
 
 function buildSyntax(colors: ThemeColors) {
   return SyntaxStyle.fromTheme([
@@ -175,7 +247,7 @@ function buildSyntax(colors: ThemeColors) {
   ])
 }
 
-const [syntaxStyle, setSyntaxStyle] = createSignal(buildSyntax(ristretto))
+const [syntaxStyle, setSyntaxStyle] = createSignal(buildSyntax(tokyonight))
 /** Markdown/code SyntaxStyle for the active theme; call it inside JSX so it tracks theme changes. */
 export const syntax = syntaxStyle
 

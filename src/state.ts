@@ -73,7 +73,7 @@ const defaults: Prefs = {
   sidebarWidth: config.session?.sidebarWidth ?? 30,
   diffs: config.session?.diffs ?? "auto",
   diffWrap: "word",
-  theme: config.theme?.name ?? "monokai-pro-ristretto",
+  theme: config.theme?.name ?? "tokyonight",
   themeMode: config.theme?.mode ?? "dark",
   animations: config.animations ?? true,
   mouse: config.mouse ?? true,

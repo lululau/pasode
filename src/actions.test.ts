@@ -2,10 +2,67 @@ import { expect, spyOn, test } from "bun:test"
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
-import { canRedo, chooseMessage, cycleAgent, cycleChild, exportTranscript, fork, locateMessage, pin, redo, revertBlocker, revertTo } from "./actions"
+import { canRedo, chooseMessage, createSession, cycleAgent, cycleChild, exportTranscript, fork, locateMessage, pin, redo, revertBlocker, revertTo } from "./actions"
 import { dialogs } from "./dialog"
 import { agents, api, daemon, openTimeline, setAgents, setTimeline, timeline, workspacePins, type PaseoAgent } from "./paseo"
 import { agentId, draft, setAgentId, setDraft, setPref, setToast, toast } from "./state"
+
+test("session creation uses the submitted draft while model lookup is pending and preserves later edits", async () => {
+  let resolveModels!: (value: never) => void
+  const list = spyOn(api.providers, "listModels").mockImplementation(() => new Promise((resolve) => { resolveModels = resolve as never }))
+  const create = spyOn(api.agents, "create").mockResolvedValue({ id: "new" } as never)
+  try {
+    setDraft({ provider: "claude", thinking: "high", agent: "plan", cwd: "/original" })
+    const pending = createSession("hello")
+    const next = { provider: "codex", model: "new-model", thinking: "low", cwd: "/next", worktree: { branch: "next" } }
+    setDraft(next)
+    resolveModels({ models: [{ id: "original-model", isDefault: true }] } as never)
+    expect(await pending).toBe("new")
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({
+      config: { provider: "claude/original-model", modeId: "plan", thinkingOptionId: "high" },
+      cwd: "/original", prompt: "hello",
+    }))
+    expect(draft()).toEqual(next)
+  } finally {
+    list.mockRestore()
+    create.mockRestore()
+    setDraft({ provider: "claude" })
+  }
+})
+
+test("worktree creation preserves later edits and consumes an unchanged draft only after success", async () => {
+  let resolveCreate!: (value: never) => void
+  const create = spyOn(daemon, "createWorkspace").mockImplementation(() => new Promise((resolve) => { resolveCreate = resolve as never }))
+  const submitted = { provider: "claude", model: "original", cwd: "/original", worktree: { branch: "first", base: "main" }, agent: "plan" as const }
+  try {
+    setDraft(submitted)
+    let pending = createSession("hello")
+    const next = { provider: "codex", model: "next", cwd: "/next", worktree: { branch: "second" } }
+    setDraft(next)
+    resolveCreate({ agent: { id: "first" } } as never)
+    expect(await pending).toBe("first")
+    expect(create.mock.calls[0]![0]).toMatchObject({
+      source: { cwd: "/original", branchName: "first", refName: "main" },
+      agent: { config: { provider: "claude", model: "original", cwd: "/original", modeId: "plan" } },
+    })
+    expect(draft()).toEqual(next)
+
+    setDraft(submitted)
+    pending = createSession("hello")
+    resolveCreate({ agent: { id: "second" } } as never)
+    await pending
+    expect(draft()).toMatchObject({ provider: "claude", model: "original", cwd: undefined, worktree: undefined, agent: undefined })
+
+    setDraft(submitted)
+    pending = createSession("hello")
+    resolveCreate({ error: "failed" } as never)
+    await expect(pending).rejects.toThrow("failed")
+    expect(draft()).toBe(submitted)
+  } finally {
+    create.mockRestore()
+    setDraft({ provider: "claude" })
+  }
+})
 
 test('with permissions "prompt", Shift+Tab Plan→Build on Claude asks for the default mode, not Bypass', async () => {
   const modes: string[] = []

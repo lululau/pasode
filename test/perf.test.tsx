@@ -10,6 +10,7 @@ import { PromptSpinner } from "../src/prompt/spinner"
 import { Spinner, Transcript, type TranscriptProps } from "../src/session"
 import { Sidebar, sidebarFeatures } from "../src/sidebar"
 import { theme } from "../src/theme"
+import { temporaryRows, type TemporarySession } from "../src/temporary-session"
 import type { PaseoAgent } from "../src/paseo"
 
 let screen: TestRendererSetup | undefined
@@ -66,6 +67,18 @@ test("a tool row replaced in place regroups the transcript and updates its turn 
   expect(timeline.rows).toHaveLength(2)
   expect(screen.captureCharFrame()).toContain("Explored: 1 read")
   expect(screen.captureCharFrame()).toContain("interrupted")
+})
+
+test("switching temporary creations refreshes a transcript with the same row count", async () => {
+  const session = (text: string): TemporarySession => ({ input: { text, images: [] }, snapshot: { text, images: [], pasted: [] }, messageId: text, navigation: 1, status: "creating" })
+  const [current, setCurrent] = createSignal(session("first message"))
+  screen = await testRender(() => <Transcript {...defaults} rows={temporaryRows(current(), [], undefined)} revision={undefined} />, { width: 80, height: 20 })
+  await screen.flush()
+  expect(screen.captureCharFrame()).toContain("first message")
+  setCurrent(session("second message"))
+  await screen.flush()
+  expect(screen.captureCharFrame()).toContain("second message")
+  expect(screen.captureCharFrame()).not.toContain("first message")
 })
 
 test("the Modified Files rows keep their renderables while an edit changes their counts", async () => {

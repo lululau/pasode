@@ -108,11 +108,18 @@ export function notify(message: string, variant: ToastVariant = "info", title?: 
 }
 export const showError = (error: unknown) => notify(error instanceof Error ? error.message : String(error), "error")
 
-export function navigate(id: string | undefined) {
+const [navigationVersion, setNavigationVersion] = createSignal(0)
+export { navigationVersion }
+
+export function navigate(id: string | undefined, options?: { keepOnError?: boolean; onError?: (error: unknown) => void }) {
+  const revision = navigationVersion() + 1
+  setNavigationVersion(revision)
   setSubagent(undefined)
   setAgentId(id)
   openTimeline(id).catch((error) => {
+    if (revision !== navigationVersion()) return
     showError(error)
-    if (agentId() === id) navigate(undefined)
+    options?.onError?.(error)
+    if (!options?.keepOnError && agentId() === id) navigate(undefined)
   })
 }

@@ -51,14 +51,15 @@ export async function cycleAgent(agent: PaseoAgent) {
 
 /** New session from the draft (provider/model/effort/agent; fork context or worktree if set). */
 export async function createSession(text: string, images?: Images, messageId?: string) {
-  const { provider, fork, worktree, profile } = draft()
-  const modes = { ...agentConfig(provider, draft().agent ?? "build"), ...(draft().agent !== "plan" && profile?.provider === provider ? profile.config : {}) }
-  const models = draft().model ? [] : ((await api.providers.listModels(provider)).models ?? [])
-  const model = draft().model ?? (models.find((m) => m.isDefault) ?? models[0])?.id
+  const submitted = draft()
+  const { provider, fork, worktree, profile } = submitted
+  const modes = { ...agentConfig(provider, submitted.agent ?? "build"), ...(submitted.agent !== "plan" && profile?.provider === provider ? profile.config : {}) }
+  const models = submitted.model ? [] : ((await api.providers.listModels(provider)).models ?? [])
+  const model = submitted.model ?? (models.find((m) => m.isDefault) ?? models[0])?.id
   if (!model) throw new Error(`No ${provider} models available on the daemon`)
   // Send the variant the prompt shows: without one the daemon leaves effort unset (provider default), not its catalog default.
-  const thinking = draft().thinking ?? (models.find((m) => m.id === model) ?? findModel(provider, model))?.defaultThinkingOptionId ?? undefined
-  const cwd = fork?.cwd ?? draft().cwd ?? process.cwd()
+  const thinking = submitted.thinking ?? (models.find((m) => m.id === model) ?? findModel(provider, model))?.defaultThinkingOptionId ?? undefined
+  const cwd = fork?.cwd ?? submitted.cwd ?? process.cwd()
   const attachments = fork ? [fork.attachment] : undefined
   let id: string
   if (worktree) {
@@ -80,7 +81,8 @@ export async function createSession(text: string, images?: Images, messageId?: s
     })
     id = handle.id
   }
-  setDraft({ ...draft(), fork: undefined, worktree: undefined, agent: undefined, cwd: undefined, profile: undefined })
+  // A later edit belongs to the next session, even if this creation finishes afterwards.
+  if (draft() === submitted) setDraft({ ...submitted, fork: undefined, worktree: undefined, agent: undefined, cwd: undefined, profile: undefined })
   return id
 }
 

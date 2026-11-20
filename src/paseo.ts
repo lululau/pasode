@@ -495,6 +495,11 @@ export async function openTimeline(agentId: string | undefined) {
     else apply(message)
   })
   closeTimeline = unsubscribe
-  await unsubscribe.ready
-  await load()
+  try {
+    await unsubscribe.ready
+    await load()
+  } catch (error) {
+    if (open === opened) setTimeline("loading", false)
+    throw error
+  }
 }

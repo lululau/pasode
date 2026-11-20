@@ -23,6 +23,7 @@ import { loadedPlugins, loadPlugins, Slot } from "./plugin"
 import { Prompt, type PromptRef, type PromptSubmit } from "./prompt"
 import { registerPromptCommands } from "./prompt/commands"
 import { enqueue } from "./prompt/queue"
+import { appendSnapshot } from "./prompt/paste"
 import { suggestFiles } from "./prompt/files"
 import { renameArgument } from "./prompt/slash"
 import { quit } from "./renderer"
@@ -31,7 +32,8 @@ import { SessionList } from "./session-list"
 import { PermissionPrompt, Spinner, SplitBorder, Transcript, type TranscriptRef } from "./session"
 import { DialogSettings } from "./settings"
 import { Sidebar, sidebarFeatures } from "./sidebar"
-import { agentId, current, draft, navigate, notify, prefs, rememberDraft, setDraft, setPref, showError, subagent, toast } from "./state"
+import { agentId, current, draft, navigate, navigationVersion, notify, prefs, rememberDraft, setDraft, setPref, showError, subagent, toast, type Draft } from "./state"
+import { hasInitialMessage, putSession, removeSession, temporaryRows, temporaryTimes, visibleSession, type TemporarySession } from "./temporary-session"
 import { registerTabs, TabBar } from "./tabs"
 import { applyTheme, theme } from "./theme"
 import { listThemes, loadTheme } from "./themes"
@@ -53,6 +55,15 @@ export function App(props: { initialAgentId?: string }) {
   let transcript: TranscriptRef | undefined
   const [pending, setPending] = createSignal(false)
   const [escHint, setEscHint] = createSignal(false)
+  const [temporary, setTemporary] = createSignal<(TemporarySession & { draft: Draft })[]>([])
+  const visibleTemporary = () => visibleSession(temporary(), agentId(), navigationVersion())
+  createEffect(() => {
+    const session = visibleTemporary()
+    void timeline.revision
+    if (session && hasInitialMessage(session, timeline.rows, timeline.agentId)) {
+      setTemporary((sessions) => removeSession(sessions, session.messageId))
+    }
+  })
 
   void loadPlugins(renderer, sidebarFeatures)
   createEffect(() => (renderer.useMouse = prefs.mouse))
@@ -93,6 +104,10 @@ export function App(props: { initialAgentId?: string }) {
     { id: "command.palette", title: "Commands", category: "System", keybind: "ctrl+p", hidden: true, run: openPalette },
     { id: "session.list", title: "Switch session", category: "Session", keybind: "<leader>l", slash: "sessions", run: openSessions },
     { id: "session.new", title: "New session", category: "Session", keybind: "<leader>n", slash: "new", run: newSession },
+    { id: "session.create.retry", title: "Retry creating session", category: "Session", slash: "retry", enabled: () => visibleTemporary()?.status === "failed", run: retryCreation },
+    { id: "session.create.edit", title: "Edit failed message", category: "Session", slash: "edit-failed", enabled: () => visibleTemporary()?.status === "failed", run: editFailed },
+    { id: "session.create.recover", title: "Show failed session creation", category: "Session", slash: "recover-failed", enabled: () => temporary().some((session) => session.status === "failed" && session.messageId !== visibleTemporary()?.messageId), run: recoverFailed },
+    { id: "session.open.retry", title: "Retry opening session", category: "Session", slash: "retry-open", enabled: () => visibleTemporary()?.status === "open-failed", run: () => openCreated(visibleTemporary()!.agentId!) },
     { id: "session.new.worktree", title: "New session in a git worktree", category: "Session", slash: "worktree", run: () => actions.newWorktreeDraft() },
     { id: "session.interrupt", title: "Interrupt session", category: "Session", keybind: "escape", enabled: running, run: interrupt },
     { id: "session.rename", title: "Rename session", category: "Session", slash: "rename", enabled: () => !!current(), run: () => actions.rename() },
@@ -543,9 +558,69 @@ export function App(props: { initialAgentId?: string }) {
       .catch(showError)
   }
 
+  function startCreation(session: TemporarySession & { draft: Draft }) {
+    setTemporary((sessions) => putSession(sessions, session))
+    // createSession captures the draft before its first await. Restore any newer draft immediately.
+    const previous = draft()
+    if (previous !== session.draft) setDraft(session.draft)
+    const creation = actions.createSession(session.input.text, session.input.images.length ? session.input.images : undefined, session.messageId)
+    if (previous !== session.draft && draft() === session.draft) setDraft(previous)
+    void creation.then((id) => {
+      if (!temporary().includes(session)) return
+      const shouldOpen = visibleTemporary() === session
+      setTemporary((sessions) => putSession(sessions, { ...session, agentId: id, status: "opening" }))
+      if (shouldOpen) openCreated(id)
+    }, (error) => {
+      if (!temporary().includes(session)) return
+      const visible = visibleTemporary() === session
+      setTemporary((sessions) => putSession(sessions, { ...session, status: "failed", error: error instanceof Error ? error.message : String(error) }))
+      if (!visible) notify("Session creation failed; use /recover-failed to retry or edit the message", "error")
+    })
+  }
+
+  function openCreated(id: string) {
+    setTemporary((sessions) => sessions.map((session) => session.agentId === id ? { ...session, status: "opening", error: undefined } : session))
+    navigate(id, { keepOnError: true, onError: (error) => {
+      setTemporary((sessions) => sessions.map((session) => session.agentId === id ? { ...session, status: "open-failed", error: error instanceof Error ? error.message : String(error) } : session))
+    } })
+  }
+
+  function recoverFailed() {
+    const failed = temporary().filter((session) => session.status === "failed" && session.messageId !== visibleTemporary()?.messageId)
+    if (!failed.length) return
+    dialog.replace(() => <DialogSelect
+      title="Failed session creations"
+      options={failed.map((session) => ({ title: session.input.text || "(image)", description: session.error, value: session.messageId }))}
+      onSelect={(option) => {
+        dialog.clear()
+        const session = temporary().find((item) => item.messageId === option.value && item.status === "failed")
+        if (!session) return
+        navigate(undefined)
+        setTemporary((sessions) => putSession(sessions, { ...session, navigation: navigationVersion() }))
+      }}
+    />, "large")
+  }
+
+  function retryCreation() {
+    const session = visibleTemporary()
+    if (!session || session.status !== "failed") return
+    startCreation({ ...session, status: "creating", error: undefined })
+  }
+
+  function editFailed() {
+    const session = visibleTemporary()
+    if (!session || session.status !== "failed") return
+    queueMicrotask(() => {
+      if (!prompt || visibleTemporary() !== session) return
+      prompt.restore(appendSnapshot(prompt.snapshot(), session.snapshot))
+      setTemporary((sessions) => removeSession(sessions, session.messageId))
+    })
+  }
+
   /** Sends exactly what was typed plus native image attachments; rejecting keeps the prompt's draft. */
   async function submit(input: PromptSubmit, options?: { queue?: boolean }) {
     const agent = current()
+    if (agentId() && !agent) throw new Error("Session is still loading; try again shortly")
     const images = input.images.length ? input.images : undefined
     // `!command` runs in a Paseo terminal instead; to send a message that starts with "!", lead with a space.
     if (input.text.startsWith("!") && !images) return void (await runShell(cwd(), input.text.slice(1)))
@@ -558,7 +633,8 @@ export function App(props: { initialAgentId?: string }) {
     try {
       // Mid-turn messages steer the running turn; the daemon would interrupt it otherwise.
       if (agent) return await api.agents.ref(agent.id).send(input.text, { messageId, images, ...(agent.status === "running" ? { activeTurnBehavior: "steer" as const } : {}) })
-      navigate(await actions.createSession(input.text, images, messageId))
+      const snapshot = prompt?.snapshot() ?? { ...input, pasted: [] }
+      startCreation({ input, snapshot, messageId, navigation: navigationVersion(), submittedAt: Date.now(), worktree: !!draft().worktree, status: "creating", draft: draft() })
     } catch (error) {
       showError(error)
       throw error
@@ -600,6 +676,10 @@ export function App(props: { initialAgentId?: string }) {
   useKeyboard((key: KeyEvent) => {
     if (dialog.isOpen || key.defaultPrevented) return
     const handled = (() => {
+      if (visibleTemporary()?.status === "failed" && !key.ctrl && !key.meta && !keymap.pending) {
+        if (key.name === "r") return retryCreation(), true
+        if (key.name === "e") return editFailed(), true
+      }
       if (!keymap.pending && handleComposerKey(key)) return true
       if (!keymap.pending && prompt?.handleKey(key)) return true
       if (key.ctrl && key.name === "c") {
@@ -771,7 +851,7 @@ export function App(props: { initialAgentId?: string }) {
   return (
     <box width={dimensions().width} height={dimensions().height} backgroundColor={theme.background} flexDirection="row">
       <Show
-        when={agentId()}
+        when={agentId() || visibleTemporary()}
         fallback={
           <box flexGrow={1}>
             <box flexGrow={1} alignItems="center" paddingLeft={padding()} paddingRight={padding()}>
@@ -807,21 +887,21 @@ export function App(props: { initialAgentId?: string }) {
               viewportOptions={{ paddingRight: prefs.scrollbar ? 1 : 0 }}
               verticalScrollbarOptions={{ paddingLeft: 1, visible: prefs.scrollbar, trackOptions: { backgroundColor: theme.backgroundElement, foregroundColor: theme.border } }}
             >
-              <Show when={timeline.loading}>
+              <Show when={agentId() && timeline.loading && !visibleTemporary()}>
                 <box paddingLeft={3} marginTop={1}>
                   <Spinner>Loading session…</Spinner>
                 </box>
               </Show>
-              <Show when={timeline.hasOlder}>
+              <Show when={agentId() && timeline.hasOlder}>
                 <box paddingLeft={3} marginTop={1} onMouseUp={showOlder}>
                   <text fg={theme.textMuted}>↑ older messages · pageup at the top or /older</text>
                 </box>
               </Show>
               <Transcript
-                rows={timeline.rows}
-                revision={timeline.revision}
-                times={timeline.times}
-                marks={timeline.marks}
+                rows={temporaryRows(visibleTemporary(), agentId() ? timeline.rows : [], timeline.agentId)}
+                revision={visibleTemporary() ? undefined : timeline.revision}
+                times={temporaryTimes(visibleTemporary(), timeline.rows, timeline.times, timeline.agentId)}
+                marks={visibleTemporary() && timeline.agentId !== agentId() ? [] : timeline.marks}
                 running={running()}
                 agent={{ label: agentLabel(), color: theme.agent }}
                 model={modelInfo().name}
@@ -837,6 +917,21 @@ export function App(props: { initialAgentId?: string }) {
                 attachments={attachmentsOf}
                 ref={(ref) => (transcript = ref)}
               />
+              <Show when={(!agentId() || timeline.loading || visibleTemporary()?.status === "open-failed") && visibleTemporary()}>
+                {(session) => <box paddingLeft={3} marginTop={1}>
+                  <Switch fallback={<Spinner>{session().status === "opening" ? "Opening session…" : "Starting session…"}</Spinner>}>
+                    <Match when={session().status === "failed"}>
+                      <text fg={theme.error}>Could not start session: {session().error}</text>
+                      <text fg={theme.text} onMouseUp={retryCreation}>[r] Retry</text>
+                      <text fg={theme.text} onMouseUp={editFailed}>[e] Edit message</text>
+                    </Match>
+                    <Match when={session().status === "open-failed"}>
+                      <text fg={theme.error}>Session created, but its timeline could not be opened: {session().error}</text>
+                      <text fg={theme.text} onMouseUp={() => openCreated(session().agentId!)}>Retry opening (/retry-open)</text>
+                    </Match>
+                  </Switch>
+                </box>}
+              </Show>
             </scrollbox>
           </box>
           <box height={1} flexShrink={0} />
@@ -858,9 +953,11 @@ export function App(props: { initialAgentId?: string }) {
               </Match>
             </Switch>
             {/* Kept mounted while the composer, a permission or a subagent view covers it, so the draft survives. */}
-            <box visible={!composerOpen() && !permission() && !subagent()} flexShrink={0}>
-              <PromptBox />
-            </box>
+            <Show when={agentId()}>
+              <box visible={!composerOpen() && !permission() && !subagent()} flexShrink={0}>
+                <PromptBox />
+              </box>
+            </Show>
           </box>
         </box>
       </Show>

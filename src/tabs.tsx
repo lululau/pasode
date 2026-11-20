@@ -47,7 +47,8 @@ export function registerTabs() {
   registerCommands([
     { id: "session.tab.next", title: "Next tab", category: "Session", keybind: "<leader>.", enabled: many, run: cycle(1) },
     { id: "session.tab.previous", title: "Previous tab", category: "Session", keybind: "<leader>,", enabled: many, run: cycle(-1) },
-    { id: "session.tab.close", title: "Close tab", category: "Session", slash: "close-tab", enabled: () => prefs.tabs && !!agentId() && tabs().includes(agentId()!), run: closeCurrent },
+    // Emacs' C-x C-x: the leader twice, so it stays out of the way of every single-stroke binding.
+    { id: "session.tab.close", title: "Close tab", category: "Session", keybind: "ctrl+x ctrl+x", slash: "close-tab", enabled: () => prefs.tabs && !!agentId() && tabs().includes(agentId()!), run: closeCurrent },
     ...Array.from({ length: 9 }, (_, index) => ({
       id: `session.tab.select.${index + 1}`,
       title: `Switch to tab ${index + 1}`,

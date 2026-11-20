@@ -146,6 +146,9 @@ test("tab commands jump, cycle and close; the leader keys reach them", async () 
   expect(agentId()).toBe("tab-c") // wraps backwards from the first
   expect(press("9")).toBeUndefined() // no ninth tab: the command is disabled
   expect(agentId()).toBe("tab-c")
+  const leader = () => keymap.feed({ name: "x", ctrl: true, shift: false, meta: false, super: false })
+  expect(leader()).toBe("pending") // the first C-x only arms the sequence
+  expect(leader()).toBe("session.tab.close") // C-x C-x closes the current tab
 
   setAgentId("tab-b")
   runCommand("session.tab.close")

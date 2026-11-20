@@ -21,6 +21,19 @@ test('with permissions "prompt", Shift+Tab Plan→Build on Claude asks for the d
   expect(modes).toEqual(["default", "bypassPermissions"])
 })
 
+test("a daemon-discovered provider's Build asks for its own bypass mode, not the provider default", async () => {
+  const modes: string[] = []
+  const setAgentMode = spyOn(daemon, "setAgentMode").mockImplementation(async (_id, mode) => (modes.push(mode), null))
+  try {
+    // zcode's catalog: build (Ask Before Changes) / edit / guarded / yolo (Full Access); Build must ask for yolo.
+    await cycleAgent({ id: "a", provider: "zcode", currentModeId: "plan" } as PaseoAgent)
+    await cycleAgent({ id: "a", provider: "antigravity", currentModeId: "plan" } as PaseoAgent)
+  } finally {
+    setAgentMode.mockRestore()
+  }
+  expect(modes).toEqual(["yolo", "full-access"])
+})
+
 for (const change of ["replaced", "switched", "switched while prompting", "complete"]) {
   test(`export protects the destination when history is ${change}`, async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "pasode-export-"))

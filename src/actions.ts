@@ -12,8 +12,21 @@ import { toolSummary, type AgentTimelineItem } from "./timeline"
 
 type Images = Parameters<ReturnType<typeof api.agents.ref>["send"]>[1] extends infer O ? (O extends { images?: infer I } ? I : never) : never
 
-/** Paseo's bypass modes: Claude "Bypass", Codex "Full Access". */
-export const BYPASS_MODE: Record<string, string> = { claude: "bypassPermissions", codex: "full-access" }
+/**
+ * Paseo's bypass modes. claude/codex are ours; the rest are the daemon-discovered providers' own "skip all
+ * prompts" mode ids (the colorTier "dangerous" entry in each provider's catalog).
+ */
+export const BYPASS_MODE: Record<string, string> = {
+  claude: "bypassPermissions",
+  codex: "full-access",
+  zcode: "yolo",
+  zhipu: "bypassPermissions",
+  aliyun: "bypassPermissions",
+  "aliyun-token-plan": "bypassPermissions",
+  deepseek: "bypassPermissions",
+  magpie: "bypassPermissions",
+  antigravity: "full-access",
+}
 
 /**
  * OpenCode's agents mapped onto Paseo: Build runs with permissions bypassed (unless session.permissions is
